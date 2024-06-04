@@ -1,0 +1,446 @@
+<!dOcTypE hTML>
+<!-- Currently in development -->
+
+<!--
+    Extrudify | A custom made unorthodox 2D art tool in one HTML file
+    Copyright (C) 2024 KuraMakura
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Extrudify [Digital Art Tool]</title>
+        <style>
+            body {
+            	background-color: #000;
+                margin: 0;
+                overflow: hidden;
+            }
+            #mainDrawCanvas {
+                background-color: #f0f;
+                position: absolute;
+                left: calc((100vw - min(100vw, 100vh * 2)) / 2);
+                width: calc(min(100vw, 100vh * 2));
+                aspect-ratio: 2;
+            }
+        </style>
+    </head>
+    
+    <body>
+        <canvas id="mainDrawCanvas" width="4096" height="2048"></canvas>
+        <script>
+            
+            //VARS
+            var baseWidth = 192, baseHeight = 96
+            var scaleX, scaleY
+            
+            var uiVertexSize = 0.5
+            var uiGridBackgroundSize = 2
+            var uiNeedsUpdate = true
+            
+            var mouseX = 0, mouseY = 0
+            var mouseOriginX = 0, mouseOriginY = 0
+            var mouseDown = false
+            
+            var verts = [], edges = []
+			var origins = []
+            var nextVertexId = 0, nextFaceId = 0
+            var selectedVertIndexes, selectedEdgeIndexes
+            
+            var materials = [
+            	{stroke:"#B0B", fill:"#F0F", id:0}
+            ]
+            
+            var editType = ""
+            var editTypes = ["g","r","s","e","D"]
+            
+            var frameRate
+            var prevDateTime
+            
+            //
+            //SETUP
+            document.title = "Extrudify"
+            var mainDrawCanvas = document.getElementById("mainDrawCanvas")
+            var ctx = mainDrawCanvas.getContext("2d")
+            
+            //
+            //GENERIC FUNCS
+            function checkFramerate() {
+            	frameRate = 1000 / (performance.now() - prevDateTime)
+            	prevDateTime = performance.now()
+            }
+            
+            function deleteList(array, deleteList) {
+            	for(var i in deleteList) {
+    				delete array[deleteList[i]]
+    			}
+    			return array.filter(function(){return true})
+            }
+            
+            //
+            //INPUT FUNCS
+            function updateMousePos(e) {
+            	var rect = mainDrawCanvas.getBoundingClientRect()
+    			mouseX = (e.clientX - rect.left) / (rect.right - rect.left) * baseWidth
+    			mouseY = (e.clientY - rect.top) / (rect.bottom - rect.top) * baseHeight
+            }
+            
+            function setMouseOrigins() {
+            	mouseOriginX = mouseX
+        		mouseOriginY = mouseY
+            }
+            
+            function onMouseMove(e) {
+    			updateMousePos(e)
+    			
+    			if(mouseDown && editType == "")
+    				editType = "boxSelect"
+    			
+            	switch(editType) {
+            		case "boxSelect":
+            		break
+            		
+            		//Grab
+            		case "e":
+            		case "D":
+            		case "g":
+            			var mouseOffsetX = mouseX - mouseOriginX, mouseOffsetY = mouseY - mouseOriginY
+		    			for(var i in selectedVertIndexes) {
+		    				var index = selectedVertIndexes[i]
+		    				verts[index].x = origins[i].x + mouseOffsetX
+		    				verts[index].y = origins[i].y + mouseOffsetY
+		    			}
+		    		break
+		    		
+		    		default:
+		    			return
+            	}
+    			
+				uiUpdate()
+            }
+            
+            function onMouseUp(e) {
+    			updateMousePos(e)
+    			mouseDown = false
+    			
+            	switch(editType) {
+            		case "boxSelect":
+            			for(var i in verts) {
+            				var v = verts[i]
+            				if(
+            					(v.x > mouseOriginX && v.x < mouseX || v.x < mouseOriginX && v.x > mouseX) &&
+            					(v.y > mouseOriginY && v.y < mouseY || v.y < mouseOriginY && v.y > mouseY)
+            				)
+            					verts[i].selected = !e.ctrlKey
+            			}
+            			updateSelectedLists()
+            		break
+            	}
+            	
+            	if(editType != "") {
+    				editType = ""
+    				uiUpdate()
+    			}
+            }
+            
+            function onMouseDown(e) {
+    			updateMousePos(e)
+    			mouseDown = true
+    			
+    			if(e.ctrlKey || editType != "") {
+    				uiUpdate()
+    				return
+    			}
+    			
+    			if(!e.shiftKey) selectAll(false)
+    			mouseSelectVertex()
+    			updateSelectedLists()
+    			
+    			setMouseOrigins()
+    			
+    			uiUpdate()
+            }
+            
+            function onKeyDown(e) {
+				updateSelectedLists()
+            	
+    			switch(e.key.toString()) {
+    				//Delete vert(s)
+    				case "x":
+            		case "Backspace":
+    				case "Delete":
+    					deleteSelectedVertices()
+            		break
+    				
+		    		//Select all/none
+		    		case "a":
+		    			selectAll(!e.altKey)
+		    		break
+		    		
+		    		//Select invert
+		    		case "i":
+		    			selectInvert()
+		    		break
+		    		
+		    		//Create new vertex
+		    		case "A":
+            			selectAll(false)
+		    			createVertex(mouseX, mouseY, true, nextVertexId)
+		    		break
+		    		
+		    		//Duplicate selected
+		    		case "D":
+		    			selectAll(false)
+		    			duplicateSelectedVertices(false)
+		    		break
+		    		
+		    		//Extrude
+		    		case "e":
+		    			selectAll(false)
+		    			duplicateSelectedVertices(true)
+	    			break
+		    	}
+            	
+            	updateSelectedLists()
+            	setOrigins()
+            	if(editTypes.includes(e.key.toString()))
+    				editType = e.key.toString()
+    			
+            	uiUpdate()
+            }
+            
+            //
+            //SELECTION FUNCS
+            function selectAll(selected) {
+            	for(var i in verts) {
+            		verts[i].selected = selected
+            	}
+            }
+            
+            function selectInvert() {
+            	for(var i in verts) {
+            		verts[i].selected = !verts[i].selected
+            	}
+            }
+            
+            function findSelectedIndexes(edgesMode) {
+            	var indexes = []
+            	var list = edgesMode ? edges : verts
+            	for(var i in list) {
+            		if(edgesMode ? (findVertexWithId(edges[i].startVertId).selected || findVertexWithId(edges[i].endVertId).selected) : verts[i].selected)
+            			indexes.push(i)
+            	}
+            	return indexes
+            }
+            
+            function updateSelectedLists() {
+            	selectedVertIndexes = findSelectedIndexes(false)
+    			selectedEdgeIndexes = findSelectedIndexes(true)
+            }
+            
+            function mouseSelectVertex() {
+            	var closest = -1
+    			var closestDist = 999999999
+    			for(var i in verts) {
+    				var v = verts[i]
+    				
+    				var dist = Math.abs(mouseX - v.x) + Math.abs(mouseY - v.y)
+    				if(dist < closestDist) {
+    					closest = i
+    					closestDist = dist
+    				}
+    			}
+    			
+    			if(closestDist < 10)
+    				verts[closest].selected = !verts[closest].selected
+            }
+            
+            //
+            //VERTEX & EDGE FUNCS
+            function createVertex(x, y, selected, id, faceId) {
+            	verts.push({x:x, y:y, selected:selected, radius:1, materialId:0, id:id, faceId:faceId})
+            	nextVertexId++
+            	nextFaceId++
+            }
+            
+            function createEdge(startVertId, endVertId) {
+            	edges.push({startVertId:startVertId, endVertId:endVertId})
+            }
+            
+            function duplicateSelectedVertices(edges) {
+    			for(var i in selectedVertIndexes) {
+    				var v = verts[selectedVertIndexes[i]]
+    				if(edges)
+    					createEdge(v.id, nextVertexId)
+    				createVertex(v.x, v.y, true, nextVertexId, nextFaceId)
+				}
+            }
+            
+            function deleteSelectedVertices() {
+            	verts = deleteList(verts, selectedVertIndexes)
+				edges = deleteList(edges, selectedEdgeIndexes)
+            }
+            
+            function findVertexWithId(id) {
+            	for(var i in verts) {
+		        	if(verts[i].id == id) return verts[i]
+		        }
+		        throw "findVertexWithId():\nInvalid id: " + id
+            }
+            
+            function setOrigins() {
+            	origins = []
+    			for(var i in selectedVertIndexes) {
+    				var v = verts[selectedVertIndexes[i]]
+    				origins.push({x:v.x, y:v.y})
+    			}
+    			
+        		setMouseOrigins()
+            }
+            
+            //
+            //MATERIAL FUNCS
+            function findMaterialWithId(id) {
+            	for(var i in materials) {
+            		if(materials[i].id == id) return materials[i]
+            	}
+		        throw "findMaterialWithId():\nInvalid id: " + id
+            }
+            
+            //
+            //DRAWING FUNCS
+            function drawGridBackground(col1, col2) {
+                for(var i = 0; i < baseWidth / uiGridBackgroundSize; i++) {
+                    for(var j = 0; j < baseHeight / uiGridBackgroundSize; j++) {
+                    	ctx.beginPath()
+                        ctx.fillStyle = (i + j % 2) % 2 == 0 ? col1 : col2
+                        ctx.fillRect(i * uiGridBackgroundSize, j * uiGridBackgroundSize, uiGridBackgroundSize, uiGridBackgroundSize)
+                    }
+                }
+            }
+        	
+            function drawVertex(x, y, radius, materialId, selected) {
+            	ctx.beginPath()
+                ctx.fillStyle = materialId < 0 ? (selected ? "#FF8500" : "#000") : findMaterialWithId(materialId).stroke
+                ctx.arc(x, y, radius, 0, 2 * Math.PI)
+                ctx.fill()
+            }
+            
+            function drawEdge(x1, y1, x2, y2, rad1, rad2, materialId) {
+            	var material = findMaterialWithId(materialId)
+            	
+        		ctx.beginPath()
+                ctx.strokeStyle = material.stroke
+                ctx.lineWidth = rad1 * 2
+                ctx.moveTo(x1, y1)
+                ctx.lineWidth = rad2 * 2
+                ctx.lineTo(x2, y2)
+                ctx.stroke()
+            }
+            
+            function drawFace(x1, y1, x2, y2, materialId, connected) {
+            	var material = findMaterialWithId(materialId)
+            	
+            	if(!connected)
+                	ctx.fill()
+            		ctx.beginPath()
+                ctx.fillStyle = material.fill
+                ctx.lineTo(x1, y1)
+                ctx.lineTo(x2, y2)
+            }
+            
+            //Send request to update ui
+            function uiUpdate() {
+            	uiNeedsUpdate = true
+            }
+            
+            //Update ui
+            function uiUpdateRun() {
+            	ctx.resetTransform()
+            	scaleX = ctx.canvas.width / baseWidth, scaleY = ctx.canvas.height / baseHeight
+            	ctx.scale(scaleX, scaleY)
+            	
+            	drawGridBackground("#262626", "#333333")
+		        
+		        ctx.font = "4px Calibri"
+		        ctx.fillStyle = "#FFF"
+		        ctx.fillText(editType, 6, 6)
+		        ctx.fillText(Math.round(frameRate) + " fps", 0, 95)
+		        //ctx.fillText(, 6, 90)
+		        
+		        if(editType == "boxSelect") {
+		        	ctx.beginPath()
+                    ctx.strokeStyle = "#FFFA"
+                    ctx.lineWidth = 0.25
+                    ctx.fillStyle = "#FFF2"
+                	ctx.rect(mouseOriginX, mouseOriginY, mouseX - mouseOriginX, mouseY - mouseOriginY)
+                	ctx.stroke()
+                	ctx.fill()
+                }
+		        
+		        //Draw faces
+		        ctx.beginPath()
+		        var prevFaceId
+		        for(var i in edges) {
+		        	var startVert = findVertexWithId(edges[i].startVertId), endVert = findVertexWithId(edges[i].endVertId)
+		        	drawFace(startVert.x, startVert.y, endVert.x, endVert.y, startVert.materialId, startVert.faceId == prevFaceId || endVert.faceId == prevFaceId)
+		        	
+		        	prevFaceId = startVert.faceId
+		        }
+		        ctx.fill()
+		        
+		        for(var i in edges) {
+		        	var startVert = findVertexWithId(edges[i].startVertId), endVert = findVertexWithId(edges[i].endVertId)
+		        	drawEdge(startVert.x, startVert.y, endVert.x, endVert.y, startVert.radius, endVert.radius, startVert.materialId)
+		        }
+		        
+		        for(var i in verts) {
+		        	var v = verts[i]
+		        	drawVertex(v.x, v.y, v.radius, 0, "#0DF")
+		        }
+		        
+		        //UI selection dots
+		        for(var i in verts) {
+		        	var v = verts[i]
+		        	drawVertex(v.x, v.y, uiVertexSize, -1, v.selected)
+		        }
+		        
+		        ctx.closePath()
+            }
+            
+            //
+            //SETUP
+            window.addEventListener("mousemove", onMouseMove)
+            window.addEventListener("mouseup", onMouseUp)
+            window.addEventListener("mousedown", onMouseDown)
+            window.addEventListener("keydown", onKeyDown)
+			window.setInterval(update, 1)
+            
+            uiUpdateRun()
+            
+            //
+            //MAIN CODE
+            function update() {
+            	checkFramerate()
+            	
+            	if(uiNeedsUpdate) {
+            		uiUpdateRun()
+            		uiNeedsUpdate = false
+            	}
+            }
+            
+        </script>
+    </body>
+</html>
