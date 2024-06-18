@@ -1,6 +1,5 @@
 <!dOcTypE hTML>
 <!-- Currently in development -->
-
 <!--
     Extrudify | A custom made unorthodox 2D art tool in one HTML file
     Copyright (C) 2024 KuraMakura
@@ -21,7 +20,7 @@
 <html>
     <head>
         <meta charset="utf-8">
-        <title>Extrudify [Digital Art Tool]</title>
+        <title>Extrudify</title>
         <style>
             body {
             	background-color: #000;
@@ -42,6 +41,9 @@
         <canvas id="mainDrawCanvas" width="4096" height="2048"></canvas>
         <script>
             
+            //DEBUG
+            var DEBUG_VERT = 1
+
             //VARS
             var baseWidth = 192, baseHeight = 96
             var scaleX, scaleY
@@ -53,6 +55,7 @@
             var mouseX = 0, mouseY = 0
             var mouseOriginX = 0, mouseOriginY = 0
             var mouseDown = false
+            var editCentreOriginX = 96, editCentreOriginY = 48
             
             var verts = [], edges = []
 			var origins = []
@@ -60,7 +63,7 @@
             var selectedVertIndexes, selectedEdgeIndexes
             
             var materials = [
-            	{stroke:"#B0B", fill:"#F0F", id:0}
+            	{stroke:"#28B", fill:"#20B", id:0}
             ]
             
             var editType = ""
@@ -77,9 +80,15 @@
             
             //
             //GENERIC FUNCS
+            function normalize(x, y) {
+                return Math.sqrt(x*x + y*y)
+            }
+
             function checkFramerate() {
             	frameRate = 1000 / (performance.now() - prevDateTime)
             	prevDateTime = performance.now()
+                
+                //console.log(Math.floor(frameRate))
             }
             
             function deleteList(array, deleteList) {
@@ -87,6 +96,24 @@
     				delete array[deleteList[i]]
     			}
     			return array.filter(function(){return true})
+            }
+            
+            function exportPng() {
+                uiUpdateRun()//TODO: Transparent+No UI draw func
+                var a = document.createElement("a")
+                a.download = "epic.png"
+                a.href = mainDrawCanvas.toDataURL('image/png').replace("image/png", "image/octet-stream")
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+            }
+            
+            //
+            //DEBUG FUNCS
+            function drawDebugText(txt, x, y, siz) {
+                ctx.font = siz + "px Calibri"
+                ctx.fillStyle = "#FFF"
+                ctx.fillText(txt, x, y)
             }
             
             //
@@ -104,7 +131,8 @@
             
             function onMouseMove(e) {
     			updateMousePos(e)
-    			
+                var mouseOffsetX = mouseX - mouseOriginX, mouseOffsetY = mouseY - mouseOriginY
+
     			if(mouseDown && editType == "")
     				editType = "boxSelect"
     			
@@ -112,11 +140,19 @@
             		case "boxSelect":
             		break
             		
+                    //Scale
+                    case "s":
+		    			for(var i in selectedVertIndexes) {
+		    				var index = selectedVertIndexes[i]
+		    				verts[index].x = (origins[i].x - editCentreOriginX) * mouseOffsetX * Math.abs(editCentreOriginX - mouseOriginX) + editCentreOriginX
+		    				verts[index].y = (origins[i].y - editCentreOriginY) * mouseOffsetY * Math.abs(editCentreOriginY - mouseOriginY) + editCentreOriginY
+		    			}
+                    break
+                    
             		//Grab
             		case "e":
             		case "D":
             		case "g":
-            			var mouseOffsetX = mouseX - mouseOriginX, mouseOffsetY = mouseY - mouseOriginY
 		    			for(var i in selectedVertIndexes) {
 		    				var index = selectedVertIndexes[i]
 		    				verts[index].x = origins[i].x + mouseOffsetX
@@ -200,12 +236,29 @@
 		    			createVertex(mouseX, mouseY, true, nextVertexId)
 		    		break
 		    		
+		    		//Create new edge
+		    		case "f":
+                        createEdgesFromSelected()
+		    		break
+		    		
 		    		//Duplicate selected
 		    		case "D":
 		    			selectAll(false)
 		    			duplicateSelectedVertices(false)
 		    		break
 		    		
+                    //Scale
+                    case "s":
+                        var editCentreOriginX = 0, editCentreOriginY = 0
+                        for(var i in selectedVertIndexes) {
+                            var v = verts[selectedVertIndexes[i]]
+                            editCentreOriginX += v.x
+                            editCentreOriginY += v.y
+                        }
+                        editCentreOriginX /= selectedVertIndexes.length
+                        editCentreOriginY /= selectedVertIndexes.length
+                    break
+                    
 		    		//Extrude
 		    		case "e":
 		    			selectAll(false)
@@ -277,6 +330,15 @@
             
             function createEdge(startVertId, endVertId) {
             	edges.push({startVertId:startVertId, endVertId:endVertId})
+            }
+            
+            function createEdgesFromSelected() {
+                //Create an edge with every combination of 2 selected vertices
+                for(var i = 0; i < selectedVertIndexes.length; i++) {
+                    for(var j = i + 1; j < selectedVertIndexes.length; j++) {
+                        createEdge(verts[selectedVertIndexes[i]].id, verts[selectedVertIndexes[j]].id)
+                    }
+                }
             }
             
             function duplicateSelectedVertices(edges) {
@@ -374,21 +436,10 @@
             	
             	drawGridBackground("#262626", "#333333")
 		        
-		        ctx.font = "4px Calibri"
-		        ctx.fillStyle = "#FFF"
-		        ctx.fillText(editType, 6, 6)
-		        ctx.fillText(Math.round(frameRate) + " fps", 0, 95)
-		        //ctx.fillText(, 6, 90)
-		        
-		        if(editType == "boxSelect") {
-		        	ctx.beginPath()
-                    ctx.strokeStyle = "#FFFA"
-                    ctx.lineWidth = 0.25
-                    ctx.fillStyle = "#FFF2"
-                	ctx.rect(mouseOriginX, mouseOriginY, mouseX - mouseOriginX, mouseY - mouseOriginY)
-                	ctx.stroke()
-                	ctx.fill()
-                }
+		        drawDebugText(editType, 6, 6, 4)
+		        //drawDebugText(mouseOffsetX + "," + mouseOffsetY, 186, 6, 4)
+		        //drawDebugText(frameRate, 6, 95, 4)
+		        //drawDebugText(edges.length, 186, 90, 4)
 		        
 		        //Draw faces
 		        ctx.beginPath()
@@ -415,8 +466,22 @@
 		        for(var i in verts) {
 		        	var v = verts[i]
 		        	drawVertex(v.x, v.y, uiVertexSize, -1, v.selected)
+                    if(DEBUG_VERT)
+                        drawDebugText(verts[i].id, v.x - 1, v.y - 1, 2)
 		        }
+
+                drawVertex(editCentreOriginX, editCentreOriginY, 1, -1, true)
 		        
+		        if(editType == "boxSelect") {
+		        	ctx.beginPath()
+                    ctx.strokeStyle = "#FFFA"
+                    ctx.lineWidth = 0.25
+                    ctx.fillStyle = "#FFF2"
+                	ctx.rect(mouseOriginX, mouseOriginY, mouseX - mouseOriginX, mouseY - mouseOriginY)
+                	ctx.stroke()
+                	ctx.fill()
+                }
+                
 		        ctx.closePath()
             }
             
@@ -427,11 +492,11 @@
             window.addEventListener("mousedown", onMouseDown)
             window.addEventListener("keydown", onKeyDown)
 			window.setInterval(update, 1)
-            
-            uiUpdateRun()
+            //exportPng()
             
             //
             //MAIN CODE
+            var imgData
             function update() {
             	checkFramerate()
             	
